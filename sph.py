@@ -9,10 +9,13 @@ class Particles():
     def __init__(self):
         init_pos = []
         init_vel = []
-        dx = 0.01
-        for ix in np.arange(0.0, 1.0, dx):
-            for iy in np.arange(0.0, 1.0, dx):
-                for iz in np.arange(0.0, 1.0, dx):
+        dx = 0.0005
+        x_range = [0.0, 0.01]
+        y_range = [0.0, 0.01]
+        z_range = [0.0, 0.001]
+        for ix in np.arange(x_range[0], x_range[1], dx):
+            for iy in np.arange(y_range[0], y_range[1], dx):
+                for iz in np.arange(z_range[0], z_range[1], dx):
                     init_pos.append([ix, iy, iz])
                     init_vel.append([0.0, 0.0, 0.0])
         self.pos = np.array(init_pos)
@@ -41,13 +44,17 @@ class FluidSolver():
         pos_vec = np.expand_dims(self.particles.pos, 0)
         pos_n = np.repeat(pos_vec, n_particle, axis=0)
         pos_p = np.repeat(pos_vec, n_particle, axis=1).reshape(n_particle, n_particle, 3)
-        r_sq_matrix = np.linalg.norm(pos_n - pos_p, axis=2)
+        r_sq_matrix = np.sum(np.square(pos_n - pos_p), axis=2)
 
         mask_same = r_sq_matrix > 0
 
         # 密度計算
         self.print("calc_rho")
         rho_mat = self.cfg.coef_density * (h_sq - r_sq_matrix) ** 3
+        #print((h - r_sq_matrix))
+        #assert False
+        #print(self.cfg.coef_density)
+        #assert False
         mask_cutoff = rho_mat > 0
         mask = mask_same & mask_cutoff
         rho_mat = np.where(mask, rho_mat, 0.0)
@@ -58,6 +65,9 @@ class FluidSolver():
         self.print("calc_press_echo_particle")
         self.particles.pressure = self.cfg.B * \
                 np.maximum(np.power(self.particles.rho / self.cfg.rhop0, self.cfg.gamma) - 1, 0) # [n_particle, 1]
+        #print((self.particles.rho / self.cfg.rhop0).flatten())
+        #print(self.particles.pressure.flatten())
+        #assert False
 
         # 圧力項
         self.print("calc_press")
@@ -73,6 +83,8 @@ class FluidSolver():
         press_mat = np.expand_dims(press_mat, -1) / (diff + self.cfg.eps)
         mask3d = np.broadcast_to(np.expand_dims(mask, -1), [n_particle, n_particle, 3])
         press_f = np.sum(np.where(mask3d,  press_mat, 0.0), axis=1) # [n_particle, 3]
+        print(press_f)
+        assert False
 
         # 粘性項
         self.print("calc_viscosity")
@@ -85,6 +97,7 @@ class FluidSolver():
 
         force = press_f + self.cfg.viscosity * visco_f
         print(force)
+        assert False
         self.particles.acceleration = force / (self.particles.rho + self.cfg.eps)
 
 
@@ -94,8 +107,6 @@ class FluidSolver():
 
         # 重力の加算
         acceleration += self.cfg.gravity
-        print(acceleration)
-        assert False
 
         self.particles.vel += self.cfg.time_step * acceleration
         self.particles.pos += self.cfg.time_step * self.particles.vel
@@ -150,6 +161,7 @@ def main():
 
     cfg = Params()
     fs = FluidSolver(cfg)
+    print(f'n_particles:{len(fs.particles)}')
     save(fs.particles.pos, f"{out_dir}/0.p")
     fs.run()
     save(fs.particles.pos, f"{out_dir}/100.p")
