@@ -9,14 +9,14 @@ class Particles():
     def __init__(self):
         init_pos = []
         init_vel = []
-        dx = 0.005
-        x_range = [-0.1, 0.1]
-        y_range = [-0.1, 0.1]
-        z_range = [0.0, 0.01]
+        dx = 0.01
+        x_range = [-1.0, -0.9]
+        y_range = [-1.0,  0.1]
+        z_range = [0.0, dx]
         for ix in np.arange(x_range[0], x_range[1], dx):
             for iy in np.arange(y_range[0], y_range[1], dx):
                 for iz in np.arange(z_range[0], z_range[1], dx):
-                    init_pos.append([ix, iy, iz])
+                    init_pos.append([ix+np.random.normal(0.0, 0.001), iy+np.random.normal(0.0, 0.001), iz+np.random.normal(0.0, 0.001)])
                     init_vel.append([0.0, 0.0, 0.0])
         self.pos = np.array(init_pos)
         self.vel = np.array(init_vel)
@@ -91,39 +91,48 @@ class FluidSolver():
         v_p = np.repeat(velocity_vec, n_particle, axis=1).reshape(n_particle, n_particle, 3)
         visco_mat = self.cfg.coef_viscosity * (h - r) / (self.particles.rho + self.cfg.eps)
         visco_mat = np.expand_dims(visco_mat, -1) * (v_n - v_p)
-        visco_f = np.sum(np.where(mask3d,  visco_mat, 0.0), axis=1) # [n_particle, 3]
+        visco_f = np.sum(np.where(mask3d, visco_mat, 0.0), axis=1) # [n_particle, 3]
 
         force = press_f + self.cfg.viscosity * visco_f
         self.particles.acceleration = force / (self.particles.rho + self.cfg.eps)
+        
+        #print("press:", press_f / (self.particles.rho + self.cfg.eps))
+        #print("visco:", self.cfg.viscosity * visco_f / (self.particles.rho + self.cfg.eps))
+        #assert False
 
 
     def integrate(self):
         self.print("update_particle")
-        acceleration = self.particles.acceleration
+        accel = self.particles.acceleration
 
+        h = self.cfg.smoothlen
         # 壁境界
-        dist = np.sum(self.particles.pos * np.array([[1,0,0]]), axis=1, keepdims=True)
-        acceleration += -np.minimum(dist, 0) * self.cfg.wall * np.array([[1,0,0]])
+        xlim = [-1.0, 1.0]
+        ylim = [-1.0, 1.0]
+        zlim = [-1.0, 1.0]
+        
+        for i, lim in zip([0,1,2], [xlim, ylim, zlim]):
+            diff = 2.0 * h - (self.particles.pos[:,i] - lim[0])
+            adj = self.cfg.wall * diff - self.cfg.damp * self.particles.vel[:,i]
+            accel[:,i] += np.where(diff > 0, adj, 0.0)
 
-        dist = np.sum(self.particles.pos * np.array([[0,1,0]]), axis=1, keepdims=True)
-        acceleration += -np.minimum(dist, 0) * self.cfg.wall * np.array([[0,1,0]])
-        
-        dist = np.sum(self.particles.pos * np.array([[-1,0,0]]), axis=1, keepdims=True)
-        acceleration += -np.minimum(dist, 0) * self.cfg.wall * np.array([[-1,0,0]])
-        
-        dist = np.sum(self.particles.pos * np.array([[0,-1,0]]), axis=1, keepdims=True)
-        acceleration += -np.minimum(dist, 0) * self.cfg.wall * np.array([[0,-1,0]])
+            diff = 2.0 * h - (lim[1] - self.particles.pos[:,i])
+            adj = self.cfg.wall * diff + self.cfg.damp * self.particles.vel[:,i]
+            accel[:,i] -= np.where(diff > 0, adj, 0.0)
 
         # 重力の加算
-        acceleration += self.cfg.gravity
+        accel += self.cfg.gravity
 
-        self.particles.vel += self.cfg.time_step * acceleration
+        self.particles.vel += self.cfg.time_step * accel
+        #print("v:", self.particles.vel[0])
         self.particles.pos += self.cfg.time_step * self.particles.vel
 
 
     def run(self):
         out_dir = "results"
-        for t in tqdm(range(100), ncols=45):
+        for t in tqdm(range(self.cfg.n_time), ncols=45):
+        #for t in range(self.cfg.n_time):
+            #print("-------------", t, "------------")
             self.compute_step()
             self.integrate()
             save(self.particles.pos, f"{out_dir}/{t}.p")
@@ -132,19 +141,21 @@ class FluidSolver():
 class Params():
     def __init__(self):
         self.verbose = 0
-        self.eps = 1.0e-12
-        self.time_step = 0.01
-        self.smoothlen = 0.012
-        
-        self.wall = 3000.0
+        self.n_time = 100
 
-        particle_mass = 0.0002
+        self.eps = 1.0e-12
+        self.time_step = 0.005
+        self.smoothlen = 0.004 # 0.012
+        
+        self.wall = 10000.0
+        self.damp = 256.0
+
+        particle_mass = 0.00020543
         # カーネル係数
         self.coef_density = particle_mass * 4 / (np.pi * np.power(self.smoothlen, 8))
         self.coef_pressure = particle_mass * (-30.0) / (np.pi * np.power(self.smoothlen, 5))
         self.coef_viscosity = particle_mass * (20/3) / (np.pi * np.power(self.smoothlen, 5))
         # for pressure
-        self.mu = 1.0
         # reference density []
         self.rhop0 = 1000.0
         self.gamma = 7
@@ -167,6 +178,24 @@ def save(data, filename):
     with open(filename, "wb") as file:
         pickle.dump(data, file)
 
+def mkmove(n_time):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+
+    fig = plt.figure()
+    ims = []
+    for t in range(n_time):
+        with open(f"results/{t}.p", "rb") as file:
+            data = pickle.load(file)
+        im = plt.plot(data[:,0], data[:,1], ".", c="blue")
+        plt.xlim(-1,1)
+        plt.ylim(-1,1)
+        ims.append(im)
+    ani = animation.ArtistAnimation(fig, ims, interval=100)
+    ani.save("/mnt/c/space/tm.mp4", writer="ffmpeg")
+
 def main():
     #import os
     #os.makedirs(out_dir, exist_ok=True)
@@ -175,6 +204,7 @@ def main():
     fs = FluidSolver(cfg)
     print(f'n_particles:{len(fs.particles)}')
     fs.run()
+    mkmove(cfg.n_time)
 
 if __name__ == "__main__":
     main()
