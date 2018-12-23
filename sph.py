@@ -1,6 +1,6 @@
 
 import numpy as np
-from collections import namedtuple
+from numba import jit, prange
 
 from tqdm import tqdm
 
@@ -9,20 +9,69 @@ class Particles():
     def __init__(self):
         init_pos = []
         init_vel = []
-        dx = 0.01
+        dx = 0.001
         x_range = [-1.0, -0.9]
-        y_range = [-1.0,  0.1]
+        y_range = [-1.0, -0.9]
         z_range = [0.0, dx]
-        for ix in np.arange(x_range[0], x_range[1], dx):
-            for iy in np.arange(y_range[0], y_range[1], dx):
-                for iz in np.arange(z_range[0], z_range[1], dx):
-                    init_pos.append([ix+np.random.normal(0.0, 0.001), iy+np.random.normal(0.0, 0.001), iz+np.random.normal(0.0, 0.001)])
+        for iz in np.arange(z_range[0], z_range[1], dx):
+            for ix in np.arange(x_range[0], x_range[1], dx):
+                for iy in np.arange(y_range[0], y_range[1], dx):
+                    px = ix
+                    py = iy
+                    pz = iz
+                    px += -dx * 0.1 + np.random.normal(0.0, dx*0.01)
+                    py += -dx * 0.1 + np.random.normal(0.0, dx*0.01)
+                    pz += -dx * 0.1 + np.random.normal(0.0, dx*0.01)
+                    init_pos.append([px, py, pz])
                     init_vel.append([0.0, 0.0, 0.0])
         self.pos = np.array(init_pos)
         self.vel = np.array(init_vel)
 
     def __len__(self):
         return len(self.pos)
+
+
+@jit('Tuple((f8[:], f8[:]))(f8[:,:], f8, f8, f8, f8, f8)', nopython=True, parallel=True)
+def calc_density_pressure(pos, smoothlen, coef_density, rhop0, gamma, B):
+    h_sq = smoothlen * smoothlen
+    particles_irho = np.empty(len(pos))
+    particles_press = np.empty(len(pos))
+    for i in prange(len(pos)):
+        rho = 0.0
+        for j in range(len(pos)):
+            if i == j:
+                continue
+            r_sq = np.sum(np.square(pos[i] - pos[j]))
+            if h_sq > r_sq:
+                rho += (h_sq - r_sq) ** 3.0
+        particles_irho[i] = 1.0 / (rho * coef_density)
+        particles_press[i] = B * np.power(1.0 / particles_irho[i] / rhop0, gamma) - 1.0
+        if particles_press[i] < 0.0:
+            particles_press[i] = 0.0
+
+    return particles_irho, particles_press
+
+
+
+@jit('f8[:,:](f8[:,:], f8[:,:], f8[:], f8[:], f8, f8, f8, f8)', nopython=True, parallel=True)
+def calc_accel(pos, vel, press, idensity, smoothlen, coef_pressure, coef_viscosity, mu):
+    h = smoothlen
+    accel = np.zeros((len(pos), 3))
+    for i in prange(len(pos)):
+        for j in range(len(pos)):
+            if i == j:
+                continue
+            #dr = pos[i] - pos[j]
+            dr = pos[j] - pos[i]
+            r = np.sqrt(np.sum(np.square(dr)))
+            if h > r:
+                c = h - r
+                pterm = coef_pressure * (press[i] + press[j]) / 2 * c ** 2 / r
+                vterm = coef_viscosity * mu * c
+                fcurr = pterm * dr + vterm * (vel[j] - vel[i])
+                fcurr *= idensity[i] * idensity[j]
+                accel[i] += fcurr
+    return accel
 
 
 class FluidSolver():
@@ -39,71 +88,18 @@ class FluidSolver():
         h_sq = self.cfg.smoothlen ** 2
         n_particle = len(self.particles)
 
-        # 距離計算
-        self.print("calc_distance")
-        pos_vec = np.expand_dims(self.particles.pos, 0)
-        pos_n = np.repeat(pos_vec, n_particle, axis=0)
-        pos_p = np.repeat(pos_vec, n_particle, axis=1).reshape(n_particle, n_particle, 3)
-        r_sq_matrix = np.sum(np.square(pos_n - pos_p), axis=2)
+        self.print("calc density and press")
+        idensity, press = calc_density_pressure(self.particles.pos, self.cfg.smoothlen, self.cfg.coef_density, self.cfg.rhop0, self.cfg.gamma, self.cfg.B)
 
-        mask_same = r_sq_matrix > 0
+        self.print("calc press and viscosity")
+        accel = calc_accel(self.particles.pos, self.particles.vel, idensity, press, self.cfg.smoothlen, self.cfg.coef_pressure, self.cfg.coef_viscosity, self.cfg.mu)
 
-        # 密度計算
-        self.print("calc_rho")
-        rho_mat = self.cfg.coef_density * (h_sq - r_sq_matrix) ** 3
-        #print((h - r_sq_matrix))
-        #assert False
-        #print(self.cfg.coef_density)
-        #assert False
-        mask_cutoff = rho_mat > 0
-        mask = mask_same & mask_cutoff
-        rho_mat = np.where(mask, rho_mat, 0.0)
-        self.particles.rho = np.sum(rho_mat, axis=1, keepdims=True) # [n_particle, 1]
-
-        # 粒子毎の圧力計算
-        # Tait equation
-        self.print("calc_press_echo_particle")
-        self.particles.pressure = self.cfg.B * \
-                np.maximum(np.power(self.particles.rho / self.cfg.rhop0, self.cfg.gamma) - 1, 0) # [n_particle, 1]
-        #print((self.particles.rho / self.cfg.rhop0).flatten())
-        #print(self.particles.pressure.flatten())
-        #assert False
-
-        # 圧力項
-        self.print("calc_press")
-        press_vec = self.particles.pressure.reshape(1, -1)
-        press_n = np.repeat(press_vec, n_particle, axis=0)
-        press_p = np.repeat(press_vec, n_particle, axis=1).reshape(n_particle, n_particle)
-        avg_pressure = (press_n + press_p) / 2.0
-        r = np.sqrt(r_sq_matrix)
-        diff = (pos_n - pos_p)
-
-        press_mat = self.cfg.coef_pressure * avg_pressure / (self.particles.rho + self.cfg.eps) \
-                    * (h - r)**2 / (r + self.cfg.eps)
-        press_mat = np.expand_dims(press_mat, -1) * diff
-        mask3d = np.broadcast_to(np.expand_dims(mask, -1), [n_particle, n_particle, 3])
-        press_f = np.sum(np.where(mask3d,  press_mat, 0.0), axis=1) # [n_particle, 3]
-
-        # 粘性項
-        self.print("calc_viscosity")
-        velocity_vec = np.expand_dims(self.particles.vel, 0)
-        v_n = np.repeat(velocity_vec, n_particle, axis=0)
-        v_p = np.repeat(velocity_vec, n_particle, axis=1).reshape(n_particle, n_particle, 3)
-        visco_mat = self.cfg.coef_viscosity * (h - r) / (self.particles.rho + self.cfg.eps)
-        visco_mat = np.expand_dims(visco_mat, -1) * (v_n - v_p)
-        visco_f = np.sum(np.where(mask3d, visco_mat, 0.0), axis=1) # [n_particle, 3]
-
-        force = press_f + self.cfg.viscosity * visco_f
-        self.particles.acceleration = force / (self.particles.rho + self.cfg.eps)
-        
-        #print("press:", press_f / (self.particles.rho + self.cfg.eps))
-        #print("visco:", self.cfg.viscosity * visco_f / (self.particles.rho + self.cfg.eps))
-        #assert False
+        self.particles.accel = accel
 
 
     def integrate(self):
         self.print("update_particle")
-        accel = self.particles.acceleration
+        accel = self.particles.accel
 
         h = self.cfg.smoothlen
         # 壁境界
@@ -112,11 +108,11 @@ class FluidSolver():
         zlim = [-1.0, 1.0]
         
         for i, lim in zip([0,1,2], [xlim, ylim, zlim]):
-            diff = 2.0 * h - (self.particles.pos[:,i] - lim[0])
+            diff = 2.0 * self.cfg.radius - (self.particles.pos[:,i] - lim[0])
             adj = self.cfg.wall * diff - self.cfg.damp * self.particles.vel[:,i]
             accel[:,i] += np.where(diff > 0, adj, 0.0)
 
-            diff = 2.0 * h - (lim[1] - self.particles.pos[:,i])
+            diff = 2.0 * self.cfg.radius - (lim[1] - self.particles.pos[:,i])
             adj = self.cfg.wall * diff + self.cfg.damp * self.particles.vel[:,i]
             accel[:,i] -= np.where(diff > 0, adj, 0.0)
 
@@ -124,7 +120,7 @@ class FluidSolver():
         accel += self.cfg.gravity
 
         self.particles.vel += self.cfg.time_step * accel
-        #print("v:", self.particles.vel[0])
+        self.print(f"v: {self.particles.vel[0]}")
         self.particles.pos += self.cfg.time_step * self.particles.vel
 
 
@@ -145,12 +141,15 @@ class Params():
 
         self.eps = 1.0e-12
         self.time_step = 0.005
-        self.smoothlen = 0.004 # 0.012
+        self.smoothlen = 0.012
+
+        self.radius = 0.004
         
         self.wall = 10000.0
         self.damp = 256.0
 
         particle_mass = 0.00020543
+        self.particle_mass = particle_mass
         # カーネル係数
         self.coef_density = particle_mass * 4 / (np.pi * np.power(self.smoothlen, 8))
         self.coef_pressure = particle_mass * (-30.0) / (np.pi * np.power(self.smoothlen, 5))
@@ -168,7 +167,7 @@ class Params():
             self.cs = self.coefsound * np.sqrt(9.8 * self.hswl)
             self.B = self.cs ** 2 * self.rhop0 / self.gamma
         # 粘性
-        self.viscosity = 0.1
+        self.mu = 0.1
         # 重力
         self.gravity = np.array([0.0, -9.8, 0.0])
 
