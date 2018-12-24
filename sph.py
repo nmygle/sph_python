@@ -9,9 +9,10 @@ class Particles():
     def __init__(self):
         init_pos = []
         init_vel = []
-        dx = 0.001
-        x_range = [-1.0, -0.9]
-        y_range = [-1.0, -0.9]
+        dx = (0.00020543/600) ** (1/3) * 0.87 / 0.004 * 0.5
+        print("dx", dx)
+        x_range = [0.0, 10.0]
+        y_range = [0.0, 20.0]
         z_range = [0.0, dx]
         for iz in np.arange(z_range[0], z_range[1], dx):
             for ix in np.arange(x_range[0], x_range[1], dx):
@@ -19,9 +20,12 @@ class Particles():
                     px = ix
                     py = iy
                     pz = iz
-                    px += -dx * 0.1 + np.random.normal(0.0, dx*0.01)
-                    py += -dx * 0.1 + np.random.normal(0.0, dx*0.01)
-                    pz += -dx * 0.1 + np.random.normal(0.0, dx*0.01)
+                    px += -0.05 + np.random.random()
+                    py += -0.05 + np.random.random()
+                    pz += -0.05 + np.random.random()
+                    px *= 0.004
+                    py *= 0.004
+                    pz *= 0.004
                     init_pos.append([px, py, pz])
                     init_vel.append([0.0, 0.0, 0.0])
         self.pos = np.array(init_pos)
@@ -45,7 +49,7 @@ def calc_density_pressure(pos, smoothlen, coef_density, rhop0, gamma, B):
             if h_sq > r_sq:
                 rho += (h_sq - r_sq) ** 3.0
         particles_irho[i] = 1.0 / (rho * coef_density)
-        particles_press[i] = B * np.power(1.0 / particles_irho[i] / rhop0, gamma) - 1.0
+        particles_press[i] = B * (np.power(rho * coef_density / rhop0, gamma) - 1.0)
         if particles_press[i] < 0.0:
             particles_press[i] = 0.0
 
@@ -94,6 +98,11 @@ class FluidSolver():
         self.print("calc press and viscosity")
         accel = calc_accel(self.particles.pos, self.particles.vel, idensity, press, self.cfg.smoothlen, self.cfg.coef_pressure, self.cfg.coef_viscosity, self.cfg.mu)
 
+        #print((1/idensity).flatten())
+        #print(press.flatten())
+        #print(accel)
+        #assert False
+
         self.particles.accel = accel
 
 
@@ -103,9 +112,10 @@ class FluidSolver():
 
         h = self.cfg.smoothlen
         # 壁境界
-        xlim = [-1.0, 1.0]
-        ylim = [-1.0, 1.0]
-        zlim = [-1.0, 1.0]
+        lim = 0.1
+        xlim = [-lim, lim]
+        ylim = [0.0, lim]
+        zlim = [-lim, lim]
         
         for i, lim in zip([0,1,2], [xlim, ylim, zlim]):
             diff = 2.0 * self.cfg.radius - (self.particles.pos[:,i] - lim[0])
@@ -126,9 +136,9 @@ class FluidSolver():
 
     def run(self):
         out_dir = "results"
-        for t in tqdm(range(self.cfg.n_time), ncols=45):
-        #for t in range(self.cfg.n_time):
-            #print("-------------", t, "------------")
+        #for t in tqdm(range(self.cfg.n_time), ncols=45):
+        for t in range(self.cfg.n_time):
+            print("-------------", t, "------------")
             self.compute_step()
             self.integrate()
             save(self.particles.pos, f"{out_dir}/{t}.p")
@@ -144,7 +154,6 @@ class Params():
         self.smoothlen = 0.012
 
         self.radius = 0.004
-        
         self.wall = 10000.0
         self.damp = 256.0
 
@@ -189,11 +198,12 @@ def mkmove(n_time):
         with open(f"results/{t}.p", "rb") as file:
             data = pickle.load(file)
         im = plt.plot(data[:,0], data[:,1], ".", c="blue")
-        plt.xlim(-1,1)
-        plt.ylim(-1,1)
+        lim = 0.1
+        plt.xlim(-lim, lim)
+        plt.ylim(-lim, lim)
         ims.append(im)
     ani = animation.ArtistAnimation(fig, ims, interval=100)
-    ani.save("/mnt/c/space/tm.mp4", writer="ffmpeg")
+    ani.save("tmp.mp4", writer="ffmpeg")
 
 def main():
     #import os
