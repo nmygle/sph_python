@@ -11,8 +11,26 @@ from particles import Particles
 class CUSPH():
     def __init__(self, cfg):
         self.cfg = cfg
-        self.particles = Particles(cfg.smoothlen)
+        self.particles = Particles(cfg)
         self.particles.cuda()
+        self.irho = cp.empty(len(self.particles))
+        self.cuda()
+
+    def cuda(self):
+        self.base = cp.float32(self.particles.n_cells)
+        self.smoothlen = cp.float32(self.cfg.smoothlen)
+        self.c0 = cp.int32(self.particles.c0)
+        self.c1 = cp.int32(self.particles.c1)
+        self.c2 = cp.int32(self.particles.c2)
+        self.dcell = cp.int32(self.cfg.dcell)
+        self.coef_density = cp.float32(self.cfg.coef_density)
+        self.coef_pressure = cp.float32(self.cfg.coef_pressure)
+        self.coef_viscosity = cp.float32(self.cfg.coef_viscosity)
+        self.coef_rhop0 = cp.float32(self.cfg.rhop0)
+        self.rhop0 = cp.float32(self.cfg.rhop0)
+        self.gamma = cp.float32(self.cfg.gamma)
+        self.B = cp.float32(self.cfg.B)
+        self.mu = cp.float32(self.cfg.mu)
 
 
     def print(self, text):
@@ -23,65 +41,150 @@ class CUSPH():
     def compute_step(self):
         self.particles.set_cell()
 
-        h = self.cfg.smoothlen
-        h_sq = self.cfg.smoothlen ** 2
+        s_inputs = []
+        v_inputs = []
+        # hash
+        s_hash = ['int32 hashid', 'raw int32 cellstart', 'raw int32 cellend', 'raw int32 sortids']
+        v_hash = [self.particles.hashids, self.particles.cellstart, self.particles.cellend, self.particles.sortids]
+        
+        # cell
+        s_cell = ['int32 base, int32 c0, int32 c1, int32 c2, int32 dcell']
+        v_cell = [self.base, self.c0, self.c1, self.c2, self.dcell]
+
+        # val for density and pressure
+        s_input1 = ['float32 smoothlen', 'raw float32 pos', 'float32 coef_density', 'float32 rhop0', 'float32 gamma', 'float32 B']
+        v_input1 = [self.smoothlen, self.particles.pos, self.coef_density, self.rhop0, self.gamma, self.B]
+
+        s_output1 = ['float32 density', 'float32 press']
+        v_output1 = [self.particles.density, self.particles.press]
+
+        s_input2 = ['float32 smoothlen', 'raw float32 pos', 'raw float32 vel', 'float32 coef_pressure', 'float32 coef_viscosity', 'float32 mu']
+        v_input2 = [self.smoothlen, self.particles.pos, self.particles.vel, self.coef_pressure, self.coef_viscosity, self.mu]
+
+        s_output2 = ['float32 accel']
+        v_output2 = [self.particles.accel]
 
         cp.ElementwiseKernel(
-            'int32 hashid, raw T pos, raw int32 cellstart, raw int32 cellend, raw int32 sortids, int32 base, float32 rc, int32 c0, int32 c1, int32 c2',
-            'T dense',
+            ', '.join(s_hash + s_cell + s_input1),
+            ', '.join(s_output1),
             '''
             // hashid to cell coordinate
-            int hs0, hd1, hd2;
+            int hd0, hd1, hd2;
             hd0 = hashid;
             hd2 = hd0  / (base * base);
             hd0 = hd0 - hd2 * base * base;
             hd1 = hd0 / base;
             hd0 = hd0 - hd1 * base;
 
-            //printf("[%d,%d,%d],", hd0, hd1, hd2);
+            //
+            float h = smoothlen;
+            float h_sq = pow(smoothlen, (float)2.0);
 
             int neighbor_id;
             int startidx;
             int endidx;
             int idx0[2];
             int idx1[2];
-            float dist;
-            for(int i0=max(hd0-2, 0); i0<min(hd0+2, c0); i0++){
-                for(int i0=max(hd0-2, 0); i0<min(hd0+2, c0); i0++){
-                    for(int i0=max(hd0-2, 0); i0<min(hd0+2, c0); i0++){
+            float r_sq;
+
+            density = 0.0;
+            press = 0.0;
+            idx0[0] = i;
+            for(int i0=max(hd0-dcell, 0); i0<=min(hd0+dcell, c0); i0++){
+                for(int i1=max(hd1-dcell, 0); i1<=min(hd1+dcell, c1); i1++){
+                    for(int i2=max(hd2-dcell, 0); i2<=min(hd2+dcell, c2); i2++){
                         neighbor_id = i0 + i1 * base + i2 * base * base;
                         startidx = cellstart[neighbor_id];
                         endidx = cellend[neighbor_id];
-                        idx0[0] = hashid;
                         for(int k=startidx; k<endidx; k++){
                             if(i==k) continue;
                             idx1[0] = sortids[k];
-                            dist = 0.0;
-                            for(d=0;d<3;d++){
+                            r_sq = 0.0;
+                            for(int d=0;d<3;d++){
                                 idx0[1] = d;
                                 idx1[1] = d;
-                                dist += pow(pos[idx0] - pos[idx1], (float)2.0);
+                                r_sq += pow(pos[idx0] - pos[idx1], (float)2.0);
                             }
-                            if(dist < pow(rc, (float)2.0)){
-                                dense += exp(-dist/rc);
+                            if(r_sq < h_sq){
+                                 density += pow(h_sq - r_sq, (float)3.0);
                             }
+                        }
+                    }
+                }
+            }
+            density = density * coef_density;
+            press = B * (pow(density * coef_density / rhop0, gamma) - 1.0);
+            if(press < 0.0) press = 0.0;
+            ''',
+            'calc_density'
+            )(*v_hash, *v_cell, *v_input1, *v_output1)
 
+        s_output1 = ['raw float32 density', 'raw float32 press']
+
+        cp.ElementwiseKernel(
+            ', '.join(s_hash + s_cell + s_output1 + s_input2),
+            ', '.join(s_output2),
+            '''
+            // hashid to cell coordinate
+            int hd0, hd1, hd2;
+            hd0 = hashid;
+            hd2 = hd0  / (base * base);
+            hd0 = hd0 - hd2 * base * base;
+            hd1 = hd0 / base;
+            hd0 = hd0 - hd1 * base;
+
+            //
+            float h = smoothlen;
+            float h_sq = pow(smoothlen, (float)2.0);
+
+            int neighbor_id;
+            int startidx;
+            int endidx;
+            int idx0[2];
+            int idx1[2];
+            float r_sq;
+            float dr[3];
+            int j;
+
+            accel = 0.0;
+            idx0[0] = i;
+            for(int i0=max(hd0-dcell, 0); i0<=min(hd0+dcell, c0); i0++){
+                for(int i1=max(hd1-dcell, 0); i1<=min(hd1+dcell, c1); i1++){
+                    for(int i2=max(hd2-dcell, 0); i2<=min(hd2+dcell, c2); i2++){
+                        neighbor_id = i0 + i1 * base + i2 * base * base;
+                        startidx = cellstart[neighbor_id];
+                        endidx = cellend[neighbor_id];
+                        for(int k=startidx; k<endidx; k++){
+                            if(i==k) continue;
+                            j = sortids[k];
+                            idx1[0] = j;
+                            r_sq = 0.0;
+                            for(int d=0;d<3;d++){
+                                idx0[1] = d;
+                                idx1[1] = d;
+                                dr[d] = pos[idx0] - pos[idx1];
+                                r_sq += pow(pos[idx0] - pos[idx1], (float)2.0);
+                            }
+                            float r = sqrtf(r_sq);
+                            float c = h - r;
+                            if(r_sq < h_sq){
+                                accel = c;
+                                /*
+                                float pterm = coef_pressure * (press[i] - press[j]) / 2.0 * pow(c, (float)2.0) / r;
+                                float vterm = coef_viscosity * mu * c;
+                                for(int d=0;d<3;d++){
+                                    idx0[1] = d;
+                                    idx1[1] = d;
+                                    accel[idx0] += (pterm * dr + vterm * (vel[j] - vel[i])) / density[i] / density[j];
+                                }*/
+                            }
                         }
                     }
                 }
             }
             ''',
-            'calc_neighbor'
-            )(hashids, pos, cellstart, cellend, sortids, n_cells, rc, c0, c1, c2, dense)
-
-        self.particles.accel = accel
-
-        #self.print("calc density and press")
-        #idensity, press = calc_density_pressure(self.particles.pos, self.cfg.smoothlen, self.cfg.coef_density, self.cfg.rhop0, self.cfg.gamma, self.cfg.B)
-
-        #self.print("calc press and viscosity")
-        #accel = calc_accel(self.particles.pos, self.particles.vel, idensity, press, self.cfg.smoothlen, self.cfg.coef_pressure, self.cfg.coef_viscosity, self.cfg.mu)
-        #start = time.time()
+            'calc_accel'
+            )(*v_hash, *v_cell, *v_output1, *v_input2, *v_output2)
 
 
     def integrate(self):

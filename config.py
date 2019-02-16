@@ -13,6 +13,9 @@ class Params():
         self.wall = 10000.0
         self.damp = 256.0
 
+        # 近傍計算の分割数
+        self.dcell = 2
+
         particle_mass = 0.00020543
         self.particle_mass = particle_mass
         # カーネル係数

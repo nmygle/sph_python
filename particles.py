@@ -6,8 +6,8 @@ import cupy as cp
 
 
 class Particles():
-    def __init__(self, smoothlen):
-        self.smoothlen = smoothlen
+    def __init__(self, cfg):
+        self.cfg = cfg
         # set initial state
         init_pos = []
         init_vel = []
@@ -26,17 +26,25 @@ class Particles():
                     init_vel.append([0.0, 0.0, 0.0])
         self.pos = np.array(init_pos)
         self.vel = np.array(init_vel)
+
         self.x_min = np.min(self.pos, axis=0)
         self.x_max = np.max(self.pos, axis=0)
 
-        self.dx = self.smoothlen / 2
+        self.dx = self.cfg.smoothlen / self.cfg.dcell;
         n_cells_xyz = (self.x_max - self.x_min - 1.0e-11) // self.dx + 1
+        self.c0 = n_cells_xyz[0]
+        self.c1 = n_cells_xyz[1]
+        self.c2 = n_cells_xyz[2]
 
         self.n_cells = ceil(np.max(n_cells_xyz))
 
-        self.hashids = np.zeros(len(self), dtype=int)
+        self.density = np.zeros(len(self), dtype=np.float32)
+        self.press = np.zeros(len(self), dtype=np.float32)
+        self.accel = np.zeros(len(self), dtype=np.float32)
+        self.hashids = np.zeros(len(self), dtype=np.float32)
         self.cellstart = np.empty(self.n_cells ** 3)
         self.cellend = np.empty(self.n_cells ** 3)
+
         self.cellstart.fill(-1)
         self.cellend.fill(-1)
 
@@ -45,7 +53,7 @@ class Particles():
         return int(sum([idx * self.n_cells ** k for k, idx in enumerate(idxs)]))
 
 
-    def add_cell(self):
+    def set_cell(self):
         # 初期化
         self.hashids.fill(0)
         self.cellstart.fill(-1)
@@ -57,7 +65,7 @@ class Particles():
             self.hashids[i] = self.encode(idx)
 
         # sort
-        self.sortids = self.hashids.argsort()
+        self.sortids = self.hashids.argsort().astype(self.hashids.dtype)
 
         # 開始点、終了点の登録
         pre = self.hashids[self.sortids[0]]
@@ -74,6 +82,9 @@ class Particles():
     def cuda(self):
         self.pos = cp.array(self.pos, dtype=np.float32)
         self.vel = cp.array(self.vel, dtype=np.float32)
+        self.density = cp.array(self.density, dtype=np.float32)
+        self.press = cp.array(self.press, dtype=np.float32)
+        self.accel = cp.array(self.accel, dtype=np.float32)
         self.hashids = cp.array(self.hashids, dtype=np.int32)
         self.cellstart = cp.array(self.cellstart, dtype=np.int32)
         self.cellend = cp.array(self.cellend, dtype=np.int32)
@@ -84,6 +95,9 @@ class Particles():
     def numpy(self):
         self.pos = cp.asnumpy(self.pos)
         self.vel = cp.asnumpy(self.vel)
+        self.density = cp.asnumpy(self.density)
+        self.press = cp.asnumpy(self.press)
+        self.accel = cp.asnumpy(self.accel)
 
 
     def __len__(self):
