@@ -65,7 +65,6 @@ class Particles():
         self.pos = np.array(init_pos)
         self.vel = np.array(init_vel)
 
-
     def __len__(self):
         return len(self.pos)
 
@@ -149,7 +148,7 @@ class FluidSolver():
         xlim = [0.0, 20.0 * scale]
         ylim = [0.0, 50.0 * scale]
         zlim = [-10.0 * scale, 10.0 * scale]
-        
+
         for i, lim in zip([0,1,2], [xlim, ylim, zlim]):
             diff = 2.0 * self.cfg.radius - (self.particles.pos[:,i] - lim[0])
             adj = self.cfg.wall * diff - self.cfg.damp * self.particles.vel[:,i]
