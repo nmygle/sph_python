@@ -6,7 +6,8 @@ import cupy as cp
 
 
 class Particles():
-    def __init__(self):
+    def __init__(self, smoothlen):
+        self.smoothlen = smoothlen
         # set initial state
         init_pos = []
         init_vel = []
@@ -25,21 +26,23 @@ class Particles():
                     init_vel.append([0.0, 0.0, 0.0])
         self.pos = np.array(init_pos)
         self.vel = np.array(init_vel)
-        self.xmin = np.min(self.pos, axis=0)
-        self.xmax = np.max(self.pos, axis=0)
+        self.x_min = np.min(self.pos, axis=0)
+        self.x_max = np.max(self.pos, axis=0)
 
-        self.dx = self.cfg.smoothlen / 2
+        self.dx = self.smoothlen / 2
         n_cells_xyz = (self.x_max - self.x_min - 1.0e-11) // self.dx + 1
 
         self.n_cells = ceil(np.max(n_cells_xyz))
 
         self.hashids = np.zeros(len(self), dtype=int)
-        self.cellstart = np.empty(n_cells ** 3).fill(-1)
-        self.cellend = np.empty(n_cells ** 3).fll(-1)
+        self.cellstart = np.empty(self.n_cells ** 3)
+        self.cellend = np.empty(self.n_cells ** 3)
+        self.cellstart.fill(-1)
+        self.cellend.fill(-1)
 
 
     def encode(self, idxs):
-        return int([idx * self.n_cells ** k for k, idx in enumerate(idxs)])
+        return int(sum([idx * self.n_cells ** k for k, idx in enumerate(idxs)]))
 
 
     def add_cell(self):
@@ -54,7 +57,7 @@ class Particles():
             self.hashids[i] = self.encode(idx)
 
         # sort
-        self.sortids = hashids.argsort()
+        self.sortids = self.hashids.argsort()
 
         # 開始点、終了点の登録
         pre = self.hashids[self.sortids[0]]
@@ -71,10 +74,11 @@ class Particles():
     def cuda(self):
         self.pos = cp.array(self.pos, dtype=np.float32)
         self.vel = cp.array(self.vel, dtype=np.float32)
-        self.hashids = cp.array(hashids, dtype=np.int32)
-        cellstart = cp.array(cellstart, dtype=np.int32)
-        cellend = cp.array(cellend, dtype=np.int32)
-        sortids = cp.array(sortids)
+        self.hashids = cp.array(self.hashids, dtype=np.int32)
+        self.cellstart = cp.array(self.cellstart, dtype=np.int32)
+        self.cellend = cp.array(self.cellend, dtype=np.int32)
+        self.x_min = cp.array(self.x_min, dtype=np.float32)
+        self.x_max = cp.array(self.x_max, dtype=np.float32)
 
 
     def numpy(self):

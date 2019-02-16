@@ -6,7 +6,10 @@ from solvers import CUSPH
 def main():
     cfg = Params()
     sph = CUSPH(cfg)
-    print(f'n_particles:{len(fs.particles)}')
+
+    sph.compute_step()
+
+    #print(f'n_particles:{len(fs.particles)}')
     #fs.run()
     #mkmove(cfg.n_time)
 
