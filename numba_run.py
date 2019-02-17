@@ -179,7 +179,7 @@ class FluidSolver():
         os.makedirs(out_dir, exist_ok=True)
         #for t in tqdm(range(self.cfg.n_time), ncols=45):
         for t in range(self.cfg.n_time):
-            if t == 6:
+            if t >= 40:
                 break
             print("-------------", t, "------------")
             self.compute_step()
@@ -216,7 +216,7 @@ def main():
     fs = FluidSolver(cfg)
     print(f'n_particles:{len(fs.particles)}')
     fs.run()
-    mkmove(cfg.n_time)
+    #mkmove(cfg.n_time)
 
 if __name__ == "__main__":
     main()

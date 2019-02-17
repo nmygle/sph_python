@@ -14,7 +14,7 @@ class Params():
         self.damp = 256.0
 
         # 近傍計算の分割数
-        self.dcell = 4
+        self.dcell = 6
 
         particle_mass = 0.00020543
         self.particle_mass = particle_mass

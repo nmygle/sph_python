@@ -31,7 +31,7 @@ class Particles():
         self.x_max = np.max(self.pos, axis=0) + (5 * scale)
 
         self.dx = self.cfg.smoothlen / self.cfg.dcell;
-        n_cells_xyz = (self.x_max - self.x_min - 1.0e-11) // self.dx + 1
+        n_cells_xyz = (self.x_max - self.x_min) // self.dx + 1
         self.c0 = n_cells_xyz[0]
         self.c1 = n_cells_xyz[1]
         self.c2 = n_cells_xyz[2]

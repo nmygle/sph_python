@@ -32,7 +32,7 @@ def mkmove(n_time, outdir):
         #plt.ylim(-lim, lim)
         ims.append(im)
     ani = animation.ArtistAnimation(fig, ims, interval=100)
-    ani.save(f"{outdir}/movie.mp4", writer="ffmpeg")
+    ani.save(f"movie.mp4", writer="ffmpeg")
 
 
 def main():
@@ -44,7 +44,7 @@ def main():
     out_dir = "results"
     os.makedirs(out_dir, exist_ok=True)
 
-    n_time = 6
+    n_time = 40
     flg_save = False
     start = time.time()
     #for t in tqdm(range(n_time), ncols=45):
