@@ -47,6 +47,7 @@ def main():
     start = time.time()
     n_time = 100
     for t in tqdm(range(n_time), ncols=45):
+    #for t in range(n_time):
         sph.compute_step()
         sph.integrate()
         save(cp.asnumpy(sph.particles.pos), f"{out_dir}/{t}.p")

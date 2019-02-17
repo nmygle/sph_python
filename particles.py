@@ -37,16 +37,15 @@ class Particles():
         self.c2 = n_cells_xyz[2]
 
         self.n_cells = ceil(np.max(n_cells_xyz))
+        self.hashids = np.zeros(len(self), dtype=np.float32)
+        self.cellstart = np.empty(self.n_cells ** 3)
+        self.cellend = np.empty(self.n_cells ** 3)
+        self.cellstart.fill(-1)
+        self.cellend.fill(-1)
 
         self.density = np.zeros(len(self), dtype=np.float32)
         self.press = np.zeros(len(self), dtype=np.float32)
         self.accel = np.zeros([len(self),3], dtype=np.float32)
-        self.hashids = np.zeros(len(self), dtype=np.float32)
-        self.cellstart = np.empty(self.n_cells ** 3)
-        self.cellend = np.empty(self.n_cells ** 3)
-
-        self.cellstart.fill(-1)
-        self.cellend.fill(-1)
 
 
     def encode(self, idxs):
@@ -62,7 +61,12 @@ class Particles():
         # 粒子にグリッドインデックスを登録
         for i in range(len(self)):
             idx = (self.pos[i] - self.x_min) // self.dx
-            self.hashids[i] = self.encode(idx)
+            # debug
+            try:
+                self.hashids[i] = self.encode(idx)
+            except:
+                print("error:", self.pos[i])
+                assert False
 
         # sort
         self.sortids = self.hashids.argsort().astype(self.hashids.dtype)
@@ -75,6 +79,7 @@ class Particles():
                 pass
             else:
                 self.cellend[pre] = i-1
+                pre = self.hashids[self.sortids[i]]
                 self.cellstart[pre] = i
         self.cellend[pre] = i
 

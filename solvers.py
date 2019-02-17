@@ -70,48 +70,42 @@ class CUSPH():
             hd1 = hd0 / base;
             hd0 = hd0 - hd1 * base;
 
-            //
             float h = smoothlen;
             float h_sq = pow(smoothlen, (float)2.0);
 
-            int neighbor_id;
-            int startidx;
-            int endidx;
-            int idx0[2];
-            int idx1[2];
-            float r_sq;
-
             density = 0.0;
             press = 0.0;
-            idx0[0] = i;
             for(int i0=max(hd0-dcell, 0); i0<=min(hd0+dcell, c0); i0++){
                 for(int i1=max(hd1-dcell, 0); i1<=min(hd1+dcell, c1); i1++){
                     for(int i2=max(hd2-dcell, 0); i2<=min(hd2+dcell, c2); i2++){
-                        neighbor_id = i0 + i1 * base + i2 * base * base;
-                        startidx = cellstart[neighbor_id];
-                        endidx = cellend[neighbor_id];
-                        for(int k=startidx; k<endidx; k++){
-                            if(i==k) continue;
-                            idx1[0] = sortids[k];
-                            r_sq = 0.0;
+                        int neighbor_id = i0 + i1 * base + i2 * base * base;
+                        int startidx = cellstart[neighbor_id];
+                        if(startidx == -1) continue;
+                        int endidx = cellend[neighbor_id];
+                        //printf("[%d,%d]", startidx, endidx);
+                        for(int k=startidx; k<=endidx; k++){
+                            int j = sortids[k];
+                            if(i==j) continue;
+                            float r_sq = 0.0;
                             for(int d=0;d<3;d++){
-                                idx0[1] = d;
-                                idx1[1] = d;
-                                r_sq += pow(pos[idx0] - pos[idx1], (float)2.0);
+                                r_sq += pow(pos[i*3+d] - pos[j*3+d], (float)2.0);
                             }
+                            //printf("[%.5f,%.5f]", r_sq, h_sq);
                             if(r_sq < h_sq){
-                                 density += pow(h_sq - r_sq, (float)3.0);
+                                density += pow(h_sq - r_sq, (float)3.0);
                             }
                         }
                     }
                 }
             }
             density = density * coef_density;
-            press = B * (pow(density * coef_density / rhop0, gamma) - 1.0);
+            press = B * (pow(density / rhop0, gamma) - 1.0);
+            //printf("[%.5f,%.5f,%.5f,%.5f,%.5f]", density, B, gamma, rhop0, press);
+            //printf("[%.5f]", press);
             if(press < 0.0) press = 0.0;
             ''',
             'calc_density'
-            )(*v_hash, *v_cell, *v_input1, *v_output1)
+            )(*v_hash, *v_cell, *v_input1, *v_output1, size=len(self.particles))
 
         s_output1 = ['raw float32 density', 'raw float32 press']
 
@@ -133,49 +127,36 @@ class CUSPH():
             hd1 = hd0 / base;
             hd0 = hd0 - hd1 * base;
 
-            //
             float h = smoothlen;
             float h_sq = pow(smoothlen, (float)2.0);
-
-            int neighbor_id;
-            int startidx;
-            int endidx;
-            int idx0[2];
-            int idx1[2];
-            float r_sq;
-            float dr[3];
-            int j;
 
             for(int d=0;d<3;d++){
                 accel[i*3+d] = 0.0;
             }
-            idx0[0] = i;
             for(int i0=max(hd0-dcell, 0); i0<=min(hd0+dcell, c0); i0++){
                 for(int i1=max(hd1-dcell, 0); i1<=min(hd1+dcell, c1); i1++){
                     for(int i2=max(hd2-dcell, 0); i2<=min(hd2+dcell, c2); i2++){
-                        neighbor_id = i0 + i1 * base + i2 * base * base;
-                        startidx = cellstart[neighbor_id];
-                        endidx = cellend[neighbor_id];
-                        for(int k=startidx; k<endidx; k++){
-                            if(i==k) continue;
-                            j = sortids[k];
-                            idx1[0] = j;
-                            r_sq = 0.0;
+                        int neighbor_id = i0 + i1 * base + i2 * base * base;
+                        int startidx = cellstart[neighbor_id];
+                        if(startidx == -1) continue;
+                        int endidx = cellend[neighbor_id];
+                        for(int k=startidx; k<=endidx; k++){
+                            int j = sortids[k];
+                            if(i==j) continue;
+                            float r_sq = 0.0;
+                            float dr[3];
                             for(int d=0;d<3;d++){
-                                idx0[1] = d;
-                                idx1[1] = d;
-                                dr[d] = pos[idx0] - pos[idx1];
-                                r_sq += pow(pos[idx0] - pos[idx1], (float)2.0);
+                                dr[d] = pos[j*3+d] - pos[i*3+d];
+                                r_sq += pow(pos[i*3+d] - pos[j*3+d], (float)2.0);
                             }
                             float r = sqrtf(r_sq);
-                            float c = h - r;
                             if(r_sq < h_sq){
-                                float pterm = coef_pressure * (press[i] - press[j]) / (float)2.0 * pow(c, (float)2.0) / r;
+                                float c = h - r;
+                                float pterm = coef_pressure * (press[i] + press[j]) / (float)2.0 * pow(c, (float)2.0) / r;
                                 float vterm = coef_viscosity * mu * c;
+                                if(density[j] == 0.0) continue;
                                 for(int d=0;d<3;d++){
-                                    idx0[1] = d;
-                                    idx1[1] = d;
-                                    accel[i*3+d] += (pterm * dr[d] + vterm * (vel[j] - vel[i])) / density[i] / density[j];
+                                    accel[i*3+d] += (pterm * dr[d] + vterm * (vel[j*3+d] - vel[i*3+d])) / density[i] / density[j];
                                 }
                             }
                         }
@@ -185,6 +166,7 @@ class CUSPH():
             ''',
             'calc_accel'
             )(*v_hash, *v_cell, *v_output1, *v_input2, *v_output2, size=len(self.particles))
+        #print(":", cp.sum(self.particles.accel, axis=0))
 
 
     def integrate(self):
