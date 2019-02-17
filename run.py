@@ -44,16 +44,20 @@ def main():
     out_dir = "results"
     os.makedirs(out_dir, exist_ok=True)
 
+    n_time = 6
+    flg_save = False
     start = time.time()
-    n_time = 100
-    for t in tqdm(range(n_time), ncols=45):
-    #for t in range(n_time):
+    #for t in tqdm(range(n_time), ncols=45):
+    for t in range(n_time):
+        print("-------------", t, "------------")
         sph.compute_step()
         sph.integrate()
-        save(cp.asnumpy(sph.particles.pos), f"{out_dir}/{t}.p")
+        if flg_save:
+            save(cp.asnumpy(sph.particles.pos), f"{out_dir}/{t}.p")
     print("finish:", time.time() - start)
 
-    mkmove(n_time, out_dir)
+    if flg_save:
+        mkmove(n_time, out_dir)
 
 
 if __name__ == "__main__":

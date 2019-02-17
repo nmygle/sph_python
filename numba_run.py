@@ -128,10 +128,17 @@ class FluidSolver():
         self.print("calc density and press")
         idensity, press = calc_density_pressure(self.particles.pos, self.cfg.smoothlen, self.cfg.coef_density, self.cfg.rhop0, self.cfg.gamma, self.cfg.B)
 
+        print("x:", self.particles.pos[0])
+        print("v:", self.particles.vel[0])
+        print("d:", 1/idensity[0])
+        print("p:", press[0])
+
         self.print("calc press and viscosity")
         accel = calc_accel(self.particles.pos, self.particles.vel, idensity, press, self.cfg.smoothlen, self.cfg.coef_pressure, self.cfg.coef_viscosity, self.cfg.mu)
 
         self.particles.accel = accel
+        print("a:", self.particles.accel[0])
+
 
 
     def integrate(self):
@@ -162,7 +169,8 @@ class FluidSolver():
         accel += self.cfg.gravity
 
         self.particles.vel += self.cfg.time_step * accel
-        self.print(f"v: {self.particles.vel[0]}")
+        #self.print(f"v: {self.particles.vel[0]}")
+        print(f"v: {self.particles.vel[0]}")
         self.particles.pos += self.cfg.time_step * self.particles.vel
 
 
@@ -171,6 +179,8 @@ class FluidSolver():
         os.makedirs(out_dir, exist_ok=True)
         #for t in tqdm(range(self.cfg.n_time), ncols=45):
         for t in range(self.cfg.n_time):
+            if t == 6:
+                break
             print("-------------", t, "------------")
             self.compute_step()
             self.integrate()

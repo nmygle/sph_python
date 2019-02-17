@@ -12,8 +12,8 @@ class CUSPH():
         self.cfg = cfg
         self.particles = Particles(cfg)
         self.particles.cuda()
-        self.irho = cp.empty(len(self.particles))
         self.cuda()
+
 
     def cuda(self):
         self.base = cp.float32(self.particles.n_cells)
@@ -25,7 +25,6 @@ class CUSPH():
         self.coef_density = cp.float32(self.cfg.coef_density)
         self.coef_pressure = cp.float32(self.cfg.coef_pressure)
         self.coef_viscosity = cp.float32(self.cfg.coef_viscosity)
-        self.coef_rhop0 = cp.float32(self.cfg.rhop0)
         self.rhop0 = cp.float32(self.cfg.rhop0)
         self.gamma = cp.float32(self.cfg.gamma)
         self.B = cp.float32(self.cfg.B)
@@ -74,7 +73,6 @@ class CUSPH():
             float h_sq = pow(smoothlen, (float)2.0);
 
             density = 0.0;
-            press = 0.0;
             for(int i0=max(hd0-dcell, 0); i0<=min(hd0+dcell, c0); i0++){
                 for(int i1=max(hd1-dcell, 0); i1<=min(hd1+dcell, c1); i1++){
                     for(int i2=max(hd2-dcell, 0); i2<=min(hd2+dcell, c2); i2++){
@@ -88,7 +86,7 @@ class CUSPH():
                             if(i==j) continue;
                             float r_sq = 0.0;
                             for(int d=0;d<3;d++){
-                                r_sq += pow(pos[i*3+d] - pos[j*3+d], (float)2.0);
+                                r_sq += pow(pos[j*3+d] - pos[i*3+d], (float)2.0);
                             }
                             //printf("[%.5f,%.5f]", r_sq, h_sq);
                             if(r_sq < h_sq){
@@ -106,6 +104,11 @@ class CUSPH():
             ''',
             'calc_density'
             )(*v_hash, *v_cell, *v_input1, *v_output1, size=len(self.particles))
+
+        print("x:", self.particles.pos[0])
+        print("v:", self.particles.vel[0])
+        print("d:", self.particles.density[0])
+        print("p:", self.particles.press[0])
 
         s_output1 = ['raw float32 density', 'raw float32 press']
 
@@ -128,7 +131,6 @@ class CUSPH():
             hd0 = hd0 - hd1 * base;
 
             float h = smoothlen;
-            float h_sq = pow(smoothlen, (float)2.0);
 
             for(int d=0;d<3;d++){
                 accel[i*3+d] = 0.0;
@@ -147,16 +149,17 @@ class CUSPH():
                             float dr[3];
                             for(int d=0;d<3;d++){
                                 dr[d] = pos[j*3+d] - pos[i*3+d];
-                                r_sq += pow(pos[i*3+d] - pos[j*3+d], (float)2.0);
+                                r_sq += pow(pos[j*3+d] - pos[i*3+d], (float)2.0);
                             }
                             float r = sqrtf(r_sq);
-                            if(r_sq < h_sq){
+                            if(r < h){
                                 float c = h - r;
                                 float pterm = coef_pressure * (press[i] + press[j]) / (float)2.0 * pow(c, (float)2.0) / r;
                                 float vterm = coef_viscosity * mu * c;
                                 if(density[j] == 0.0) continue;
                                 for(int d=0;d<3;d++){
-                                    accel[i*3+d] += (pterm * dr[d] + vterm * (vel[j*3+d] - vel[i*3+d])) / density[i] / density[j];
+                                    float fcurr = pterm * dr[d] + vterm * (vel[j*3+d] - vel[i*3+d]);
+                                    accel[i*3+d] += fcurr / density[i] / density[j];
                                 }
                             }
                         }
@@ -166,7 +169,8 @@ class CUSPH():
             ''',
             'calc_accel'
             )(*v_hash, *v_cell, *v_output1, *v_input2, *v_output2, size=len(self.particles))
-        #print(":", cp.sum(self.particles.accel, axis=0))
+        
+        print("a:", self.particles.accel[0])
 
 
     def integrate(self):
@@ -197,7 +201,7 @@ class CUSPH():
         accel += self.gravity
 
         self.particles.vel += self.cfg.time_step * accel
-        self.print(f"v: {self.particles.vel[0]}")
+        print(f"v: {self.particles.vel[0]}")
         self.particles.pos += self.cfg.time_step * self.particles.vel
 
 

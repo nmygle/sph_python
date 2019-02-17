@@ -27,8 +27,8 @@ class Particles():
         self.pos = np.array(init_pos)
         self.vel = np.array(init_vel)
 
-        self.x_min = np.min(self.pos, axis=0)
-        self.x_max = np.max(self.pos, axis=0)
+        self.x_min = np.min(self.pos, axis=0) - (5 * scale)
+        self.x_max = np.max(self.pos, axis=0) + (5 * scale)
 
         self.dx = self.cfg.smoothlen / self.cfg.dcell;
         n_cells_xyz = (self.x_max - self.x_min - 1.0e-11) // self.dx + 1
