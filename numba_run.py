@@ -198,7 +198,7 @@ def mkmove(n_time):
         #plt.ylim(-lim, lim)
         ims.append(im)
     ani = animation.ArtistAnimation(fig, ims, interval=100)
-    ani.save("/mnt/c/space/tmp.mp4", writer="ffmpeg")
+    ani.save("tmp.mp4", writer="ffmpeg")
 
 def main():
 

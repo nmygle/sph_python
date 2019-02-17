@@ -40,7 +40,7 @@ class Particles():
 
         self.density = np.zeros(len(self), dtype=np.float32)
         self.press = np.zeros(len(self), dtype=np.float32)
-        self.accel = np.zeros(len(self), dtype=np.float32)
+        self.accel = np.zeros([len(self),3], dtype=np.float32)
         self.hashids = np.zeros(len(self), dtype=np.float32)
         self.cellstart = np.empty(self.n_cells ** 3)
         self.cellend = np.empty(self.n_cells ** 3)

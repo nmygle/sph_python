@@ -1,5 +1,4 @@
 
-import time
 from math import ceil
 
 import numpy as np
@@ -31,6 +30,7 @@ class CUSPH():
         self.gamma = cp.float32(self.cfg.gamma)
         self.B = cp.float32(self.cfg.B)
         self.mu = cp.float32(self.cfg.mu)
+        self.gravity = cp.array(self.cfg.gravity, dtype=np.float32)
 
 
     def print(self, text):
@@ -57,12 +57,6 @@ class CUSPH():
 
         s_output1 = ['float32 density', 'float32 press']
         v_output1 = [self.particles.density, self.particles.press]
-
-        s_input2 = ['float32 smoothlen', 'raw float32 pos', 'raw float32 vel', 'float32 coef_pressure', 'float32 coef_viscosity', 'float32 mu']
-        v_input2 = [self.smoothlen, self.particles.pos, self.particles.vel, self.coef_pressure, self.coef_viscosity, self.mu]
-
-        s_output2 = ['float32 accel']
-        v_output2 = [self.particles.accel]
 
         cp.ElementwiseKernel(
             ', '.join(s_hash + s_cell + s_input1),
@@ -121,6 +115,12 @@ class CUSPH():
 
         s_output1 = ['raw float32 density', 'raw float32 press']
 
+        s_input2 = ['float32 smoothlen', 'raw float32 pos', 'raw float32 vel', 'float32 coef_pressure', 'float32 coef_viscosity', 'float32 mu']
+        v_input2 = [self.smoothlen, self.particles.pos, self.particles.vel, self.coef_pressure, self.coef_viscosity, self.mu]
+
+        s_output2 = ['raw float32 accel']
+        v_output2 = [self.particles.accel]
+
         cp.ElementwiseKernel(
             ', '.join(s_hash + s_cell + s_output1 + s_input2),
             ', '.join(s_output2),
@@ -146,7 +146,9 @@ class CUSPH():
             float dr[3];
             int j;
 
-            accel = 0.0;
+            for(int d=0;d<3;d++){
+                accel[i*3+d] = 0.0;
+            }
             idx0[0] = i;
             for(int i0=max(hd0-dcell, 0); i0<=min(hd0+dcell, c0); i0++){
                 for(int i1=max(hd1-dcell, 0); i1<=min(hd1+dcell, c1); i1++){
@@ -168,15 +170,13 @@ class CUSPH():
                             float r = sqrtf(r_sq);
                             float c = h - r;
                             if(r_sq < h_sq){
-                                accel = c;
-                                /*
-                                float pterm = coef_pressure * (press[i] - press[j]) / 2.0 * pow(c, (float)2.0) / r;
+                                float pterm = coef_pressure * (press[i] - press[j]) / (float)2.0 * pow(c, (float)2.0) / r;
                                 float vterm = coef_viscosity * mu * c;
                                 for(int d=0;d<3;d++){
                                     idx0[1] = d;
                                     idx1[1] = d;
-                                    accel[idx0] += (pterm * dr + vterm * (vel[j] - vel[i])) / density[i] / density[j];
-                                }*/
+                                    accel[i*3+d] += (pterm * dr[d] + vterm * (vel[j] - vel[i])) / density[i] / density[j];
+                                }
                             }
                         }
                     }
@@ -184,16 +184,16 @@ class CUSPH():
             }
             ''',
             'calc_accel'
-            )(*v_hash, *v_cell, *v_output1, *v_input2, *v_output2)
+            )(*v_hash, *v_cell, *v_output1, *v_input2, *v_output2, size=len(self.particles))
 
 
     def integrate(self):
         self.print("update_particle")
-        accel = self.particles.accel
+        accel = self.particles.accel.copy()
 
-        speed = np.sum(np.square(accel), axis=1, keepdims=True)
-        condition = np.broadcast_to(speed > self.cfg.limit**2, accel.shape)
-        accel = np.where(condition, accel*self.cfg.limit/np.sqrt(speed), accel)
+        speed = cp.sum(cp.square(accel), axis=1, keepdims=True)
+        condition = cp.broadcast_to(speed > self.cfg.limit**2, accel.shape)
+        accel = cp.where(condition, accel*self.cfg.limit/np.sqrt(speed), accel)
 
         h = self.cfg.smoothlen
         # 壁境界
@@ -201,32 +201,21 @@ class CUSPH():
         xlim = [0.0, 20.0 * scale]
         ylim = [0.0, 50.0 * scale]
         zlim = [-10.0 * scale, 10.0 * scale]
-        
+
         for i, lim in zip([0,1,2], [xlim, ylim, zlim]):
             diff = 2.0 * self.cfg.radius - (self.particles.pos[:,i] - lim[0])
             adj = self.cfg.wall * diff - self.cfg.damp * self.particles.vel[:,i]
-            accel[:,i] += np.where(diff > 0, adj, 0.0)
+            accel[:,i] += cp.where(diff > 0, adj, 0.0)
 
             diff = 2.0 * self.cfg.radius - (lim[1] - self.particles.pos[:,i])
             adj = self.cfg.wall * diff + self.cfg.damp * self.particles.vel[:,i]
-            accel[:,i] -= np.where(diff > 0, adj, 0.0)
+            accel[:,i] -= cp.where(diff > 0, adj, 0.0)
 
         # 重力の加算
-        accel += self.cfg.gravity
+        accel += self.gravity
 
         self.particles.vel += self.cfg.time_step * accel
         self.print(f"v: {self.particles.vel[0]}")
         self.particles.pos += self.cfg.time_step * self.particles.vel
-
-
-    def run(self):
-        out_dir = "results"
-        os.makedirs(out_dir, exist_ok=True)
-        #for t in tqdm(range(self.cfg.n_time), ncols=45):
-        for t in range(self.cfg.n_time):
-            print("-------------", t, "------------")
-            self.compute_step()
-            self.integrate()
-            save(self.particles.pos, f"{out_dir}/{t}.p")
 
 

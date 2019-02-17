@@ -1,18 +1,61 @@
 
+import os, time
+import pickle
+
+from tqdm import tqdm
+
+import cupy as cp
+
 from config import Params
 from solvers import CUSPH
+
+
+def save(data, filename):
+    with open(filename, "wb") as f:
+        pickle.dump(data, f)
+
+
+def mkmove(n_time, outdir):
+    import matplotlib
+    matplotlib.use("agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+
+    fig = plt.figure()
+    ims = []
+    for t in range(n_time):
+        with open(f"{outdir}/{t}.p", "rb") as file:
+            data = pickle.load(file)
+        im = plt.plot(data[:,0], data[:,1], ".", c="blue")
+        #lim = 0.1
+        #plt.xlim(-lim, lim)
+        #plt.ylim(-lim, lim)
+        ims.append(im)
+    ani = animation.ArtistAnimation(fig, ims, interval=100)
+    ani.save(f"{outdir}/movie.mp4", writer="ffmpeg")
 
 
 def main():
     cfg = Params()
     sph = CUSPH(cfg)
 
-    sph.compute_step()
+    print(f'n_particles:{len(sph.particles)}')
 
-    #print(f'n_particles:{len(fs.particles)}')
-    #fs.run()
-    #mkmove(cfg.n_time)
+    out_dir = "results"
+    os.makedirs(out_dir, exist_ok=True)
+
+    start = time.time()
+    n_time = 100
+    for t in tqdm(range(n_time), ncols=45):
+        sph.compute_step()
+        sph.integrate()
+        save(cp.asnumpy(sph.particles.pos), f"{out_dir}/{t}.p")
+    print("finish:", time.time() - start)
+
+    mkmove(n_time, out_dir)
+
 
 if __name__ == "__main__":
     main()
+
 
