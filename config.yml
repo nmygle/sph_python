@@ -1,0 +1,39 @@
+verbose: 0
+n_time: 200
+limit: 200.0
+
+time_step: 0.004
+smoothlen: 0.012
+
+radius: 0.004
+wall: 10000.0
+damp: 256.0
+
+# 近傍計算の分割数
+dcell: 6
+
+particle_mass: 0.00020543
+
+# カーネル係数
+#coef_density = particle_mass * 315.0 / (64.0 * np.pi * np.power(self.smoothlen, 9))
+#coef_pressure = particle_mass * (-45.0) / (np.pi * np.power(self.smoothlen, 6))
+#coef_viscosity = particle_mass * 45.0 / (np.pi * np.power(self.smoothlen, 6))
+# for pressure
+# reference density []
+rhop0: 600.0
+gamma: 7
+hswl: 0
+
+# 圧力項係数
+#if self.hswl == 0:
+#    self.B = 200
+#else:
+#    self.coefsound = 20
+#    self.cs = self.coefsound * np.sqrt(9.8 * self.hswl)
+#    self.B = self.cs ** 2 * self.rhop0 / self.gamma
+
+# 粘性
+mu: 0.1
+# 重力
+gravity: [0.0, -9.8, 0.0]
+
